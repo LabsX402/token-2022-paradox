@@ -17,7 +17,7 @@ pub mod instructions;
 use state::*;
 use instructions::*;
 
-declare_id!("PARADOX111111111111111111111111111111111111");
+declare_id!("9FFog8oDVKbwUpdqa7Z8uWfRDQ2QGzv6z24SBgGKTVFo");
 
 // =============================================================================
 // SEEDS
