@@ -6,12 +6,17 @@
  */
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, TokenAccount, Mint, Transfer, transfer};
+use anchor_spl::token_interface::{
+    TokenInterface, TokenAccount, Mint, 
+    TransferChecked, transfer_checked,
+    InterfaceAccount, Interface,
+};
 
 use crate::{
     state::DevVestingVault,
     ParadoxError,
     DEV_VESTING_SEED,
+    MIN_TRANSFER_AMOUNT,
     DevVestingInitialized,
     DevUnlockRequested,
     DevUnlockExecuted,
@@ -19,6 +24,9 @@ use crate::{
     DEFAULT_TIMELOCK_SECONDS,
     YEAR1_UNLOCK_RATE_BPS,
 };
+
+/// Token decimals (6 for PDOX)
+const TOKEN_DECIMALS: u8 = 6;
 
 // =============================================================================
 // INIT DEV VESTING
@@ -31,7 +39,7 @@ pub struct InitDevVesting<'info> {
     
     pub dev: Signer<'info>,
     
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         init,
@@ -43,12 +51,12 @@ pub struct InitDevVesting<'info> {
     pub vault: Account<'info, DevVestingVault>,
     
     #[account(mut)]
-    pub vault_token_account: Account<'info, TokenAccount>,
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
     
     #[account(mut)]
-    pub source_token_account: Account<'info, TokenAccount>,
+    pub source_token_account: InterfaceAccount<'info, TokenAccount>,
     
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
@@ -85,17 +93,19 @@ pub fn init_dev_handler(
     vault.total_unlocked = 0;
     vault.bump = ctx.bumps.vault;
     
-    // Transfer locked tokens to vault
-    transfer(
+    // Transfer locked tokens to vault (uses transfer_checked for Token-2022)
+    transfer_checked(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
-            Transfer {
+            TransferChecked {
                 from: ctx.accounts.source_token_account.to_account_info(),
                 to: ctx.accounts.vault_token_account.to_account_info(),
                 authority: ctx.accounts.admin.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
             },
         ),
         locked_amount,
+        TOKEN_DECIMALS,
     )?;
     
     emit!(DevVestingInitialized {
@@ -132,6 +142,9 @@ pub fn request_unlock_handler(ctx: Context<RequestDevUnlock>, amount: u64) -> Re
     let vault = &mut ctx.accounts.vault;
     let clock = Clock::get()?;
     
+    // SECURITY: Enforce minimum transfer amount (dust attack prevention)
+    require!(amount >= MIN_TRANSFER_AMOUNT, ParadoxError::AmountBelowMinimum);
+    
     // Check cliff
     require!(vault.cliff_passed(clock.unix_timestamp), ParadoxError::CliffNotPassed);
     
@@ -148,7 +161,9 @@ pub fn request_unlock_handler(ctx: Context<RequestDevUnlock>, amount: u64) -> Re
     // Set pending unlock
     vault.pending_amount = amount;
     vault.last_request_time = clock.unix_timestamp;
-    vault.unlock_time = clock.unix_timestamp + vault.timelock_seconds;
+    vault.unlock_time = clock.unix_timestamp
+        .checked_add(vault.timelock_seconds)
+        .ok_or(ParadoxError::MathOverflow)?;
     
     emit!(DevUnlockRequested {
         dev: vault.dev,
@@ -168,6 +183,8 @@ pub struct ExecuteDevUnlock<'info> {
     #[account(mut)]
     pub dev: Signer<'info>,
     
+    pub mint: InterfaceAccount<'info, Mint>,
+    
     #[account(
         mut,
         seeds = [DEV_VESTING_SEED, dev.key().as_ref(), vault.mint.as_ref()],
@@ -177,12 +194,12 @@ pub struct ExecuteDevUnlock<'info> {
     pub vault: Account<'info, DevVestingVault>,
     
     #[account(mut)]
-    pub vault_token_account: Account<'info, TokenAccount>,
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
     
     #[account(mut)]
-    pub dev_token_account: Account<'info, TokenAccount>,
+    pub dev_token_account: InterfaceAccount<'info, TokenAccount>,
     
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn execute_unlock_handler(ctx: Context<ExecuteDevUnlock>) -> Result<()> {
@@ -195,31 +212,37 @@ pub fn execute_unlock_handler(ctx: Context<ExecuteDevUnlock>) -> Result<()> {
     
     let amount = vault.pending_amount;
     
-    // Transfer tokens
-    let seeds = &[
+    // Transfer tokens (uses transfer_checked for Token-2022 fee compliance)
+    let seeds: &[&[u8]] = &[
         DEV_VESTING_SEED,
         vault.dev.as_ref(),
         vault.mint.as_ref(),
         &[vault.bump],
     ];
     
-    transfer(
+    transfer_checked(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
-            Transfer {
+            TransferChecked {
                 from: ctx.accounts.vault_token_account.to_account_info(),
                 to: ctx.accounts.dev_token_account.to_account_info(),
                 authority: vault.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
             },
             &[seeds],
         ),
         amount,
+        TOKEN_DECIMALS,
     )?;
     
-    // Update state
-    vault.locked_amount -= amount;
+    // Update state (checked arithmetic)
+    vault.locked_amount = vault.locked_amount
+        .checked_sub(amount)
+        .ok_or(ParadoxError::MathOverflow)?;
     vault.pending_amount = 0;
-    vault.total_unlocked += amount;
+    vault.total_unlocked = vault.total_unlocked
+        .checked_add(amount)
+        .ok_or(ParadoxError::MathOverflow)?;
     
     emit!(DevUnlockExecuted {
         dev: vault.dev,
@@ -229,4 +252,3 @@ pub fn execute_unlock_handler(ctx: Context<ExecuteDevUnlock>) -> Result<()> {
     
     Ok(())
 }
-

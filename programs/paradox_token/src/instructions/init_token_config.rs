@@ -6,7 +6,7 @@
  */
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::Mint;
+use anchor_spl::token_interface::{Mint, InterfaceAccount};
 
 use crate::{
     state::TokenConfig,
@@ -22,7 +22,7 @@ pub struct InitTokenConfig<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
     
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         init,

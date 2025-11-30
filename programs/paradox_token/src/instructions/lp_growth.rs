@@ -6,7 +6,10 @@
  */
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, TokenAccount, Mint};
+use anchor_spl::token_interface::{
+    TokenInterface, TokenAccount, Mint,
+    InterfaceAccount, Interface,
+};
 
 use crate::{
     state::{LpGrowthManager, TokenConfig},
@@ -28,7 +31,7 @@ pub struct InitLpGrowth<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
     
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         init,
@@ -94,7 +97,7 @@ pub struct ExecuteLpGrowth<'info> {
     pub lp_growth_manager: Account<'info, LpGrowthManager>,
     
     #[account(mut)]
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     // =========================================================================
     // DEV NOTE: Add your DEX accounts here
@@ -121,7 +124,7 @@ pub struct ExecuteLpGrowth<'info> {
     #[account(mut)]
     pub fee_accumulation_account: UncheckedAccount<'info>,
     
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 

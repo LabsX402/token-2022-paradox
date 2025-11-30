@@ -11,7 +11,11 @@
  */
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, TokenAccount, Mint, Transfer, transfer};
+use anchor_spl::token_interface::{
+    TokenInterface, TokenAccount, Mint, 
+    TransferChecked, transfer_checked,
+    InterfaceAccount, Interface,
+};
 
 use crate::{
     state::{LpLock, LpLockStatus, HolderBalancesSnapshot, HolderSnapshot},
@@ -35,7 +39,7 @@ pub struct CreatePoolAndLock<'info> {
     #[account(mut)]
     pub creator: Signer<'info>,
     
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         init,
@@ -47,18 +51,18 @@ pub struct CreatePoolAndLock<'info> {
     pub lp_lock: Account<'info, LpLock>,
     
     #[account(mut)]
-    pub lp_vault: Account<'info, TokenAccount>,
+    pub lp_vault: InterfaceAccount<'info, TokenAccount>,
     
-    /// CHECK: LP token mint from DEX
-    pub lp_token_mint: UncheckedAccount<'info>,
+    /// LP token mint from DEX
+    pub lp_token_mint: InterfaceAccount<'info, Mint>,
     
     /// CHECK: Emergency multisig address
     pub emergency_multisig: UncheckedAccount<'info>,
     
     #[account(mut)]
-    pub creator_lp_account: Account<'info, TokenAccount>,
+    pub creator_lp_account: InterfaceAccount<'info, TokenAccount>,
     
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
@@ -129,7 +133,7 @@ pub struct TakeSnapshot<'info> {
     )]
     pub admin: Signer<'info>,
     
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         mut,
@@ -148,6 +152,12 @@ pub fn take_snapshot_handler(
     holder_count: u32,
 ) -> Result<u64> {
     let lp_lock = &mut ctx.accounts.lp_lock;
+    
+    // SECURITY: Require actual data - snapshots with all zeros are useless for restore
+    require!(
+        sol_reserve > 0 || token_reserve > 0 || total_supply > 0,
+        ParadoxError::SnapshotDataRequired
+    );
     
     let snapshot_id = lp_lock.take_snapshot(
         reason,
@@ -177,7 +187,7 @@ pub struct AnnounceWithdrawal<'info> {
     )]
     pub admin: Signer<'info>,
     
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         mut,
@@ -192,22 +202,32 @@ pub fn announce_withdrawal_handler(
     amount: u64,
     recipient: Pubkey,
     reason: [u8; 64],
+    sol_reserve: u64,      // REQUIRED: Current SOL in pool
+    token_reserve: u64,    // REQUIRED: Current tokens in pool
+    total_supply: u64,     // REQUIRED: Total token supply
+    holder_count: u32,     // REQUIRED: Number of holders
 ) -> Result<()> {
     let lp_lock = &mut ctx.accounts.lp_lock;
     
     // Validate amount
     require!(amount <= lp_lock.lp_tokens_locked, ParadoxError::InsufficientLpTokens);
     
-    // Take automatic snapshot before withdrawal
+    // SECURITY: Require actual reserve data for the snapshot
+    require!(
+        sol_reserve > 0 || token_reserve > 0 || total_supply > 0,
+        ParadoxError::SnapshotDataRequired
+    );
+    
+    // Take automatic snapshot before withdrawal with actual data
     let mut snapshot_reason = [0u8; 32];
     snapshot_reason[..16].copy_from_slice(b"PRE_WITHDRAWAL__");
     
     let snapshot_id = lp_lock.take_snapshot(
         snapshot_reason,
-        0, // DEV: Fetch actual reserves
-        0,
-        0,
-        0,
+        sol_reserve,
+        token_reserve,
+        total_supply,
+        holder_count,
     );
     
     // Announce withdrawal
@@ -251,7 +271,7 @@ pub fn announce_withdrawal_handler(
 pub struct ExecuteWithdrawal<'info> {
     pub executor: Signer<'info>,
     
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         mut,
@@ -264,13 +284,13 @@ pub struct ExecuteWithdrawal<'info> {
         mut,
         constraint = lp_vault.key() == lp_lock.lp_vault @ ParadoxError::InvalidVault,
     )]
-    pub lp_vault: Account<'info, TokenAccount>,
+    pub lp_vault: InterfaceAccount<'info, TokenAccount>,
     
     /// CHECK: Must match pending withdrawal recipient
     #[account(mut)]
     pub recipient_lp_account: UncheckedAccount<'info>,
     
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn execute_withdrawal_handler(
@@ -338,7 +358,7 @@ pub struct CancelWithdrawal<'info> {
     )]
     pub admin: Signer<'info>,
     
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         mut,
@@ -385,7 +405,7 @@ pub struct RestoreFromSnapshot<'info> {
     )]
     pub admin: Signer<'info>,
     
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         mut,
@@ -395,12 +415,12 @@ pub struct RestoreFromSnapshot<'info> {
     pub lp_lock: Account<'info, LpLock>,
     
     #[account(mut)]
-    pub lp_vault: Account<'info, TokenAccount>,
+    pub lp_vault: InterfaceAccount<'info, TokenAccount>,
     
     #[account(mut)]
-    pub source_lp_account: Account<'info, TokenAccount>,
+    pub source_lp_account: InterfaceAccount<'info, TokenAccount>,
     
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn restore_from_snapshot_handler(
@@ -456,7 +476,7 @@ pub fn restore_from_snapshot_handler(
 
 #[derive(Accounts)]
 pub struct GetLockStatus<'info> {
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         seeds = [LP_LOCK_SEED, mint.key().as_ref()],
@@ -520,7 +540,7 @@ pub struct TransferAdmin<'info> {
     )]
     pub current_admin: Signer<'info>,
     
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         mut,

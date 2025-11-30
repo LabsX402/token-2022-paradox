@@ -6,17 +6,25 @@
  */
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, TokenAccount, Transfer, transfer};
+use anchor_spl::token_interface::{
+    TokenInterface, TokenAccount, Mint,
+    TransferChecked, transfer_checked,
+    InterfaceAccount, Interface,
+};
 
 use crate::{
     state::DaoTreasuryVault,
     ParadoxError,
+    MIN_TRANSFER_AMOUNT,
     DaoWithdrawalProposed,
     DaoWithdrawalExecuted,
 };
 
 /// Seed for DAO Treasury PDA
 pub const DAO_TREASURY_SEED: &[u8] = b"dao_treasury";
+
+/// Token decimals (6 for PDOX)
+const TOKEN_DECIMALS: u8 = 6;
 
 // =============================================================================
 // INIT DAO TREASURY
@@ -27,7 +35,7 @@ pub struct InitDaoTreasury<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
     
-    pub mint: anchor_spl::token::Mint,
+    pub mint: InterfaceAccount<'info, Mint>,
     
     #[account(
         init,
@@ -101,6 +109,9 @@ pub fn propose_handler(
     let treasury = &mut ctx.accounts.treasury;
     let clock = Clock::get()?;
     
+    // SECURITY: Enforce minimum transfer amount (dust attack prevention)
+    require!(amount >= MIN_TRANSFER_AMOUNT, ParadoxError::AmountBelowMinimum);
+    
     // Reset period if needed
     if treasury.should_reset_period(clock.unix_timestamp) {
         treasury.reset_period(clock.unix_timestamp);
@@ -118,7 +129,9 @@ pub fn propose_handler(
     let copy_len = reason_bytes.len().min(128);
     treasury.pending_reason[..copy_len].copy_from_slice(&reason_bytes[..copy_len]);
     
-    treasury.pending_execute_after = clock.unix_timestamp + treasury.timelock_seconds;
+    treasury.pending_execute_after = clock.unix_timestamp
+        .checked_add(treasury.timelock_seconds)
+        .ok_or(ParadoxError::MathOverflow)?;
     
     emit!(DaoWithdrawalProposed {
         proposer: ctx.accounts.governance.key(),
@@ -139,6 +152,8 @@ pub fn propose_handler(
 pub struct ExecuteDaoWithdrawal<'info> {
     pub executor: Signer<'info>,
     
+    pub mint: InterfaceAccount<'info, Mint>,
+    
     #[account(
         mut,
         seeds = [DAO_TREASURY_SEED, treasury.mint.as_ref()],
@@ -150,16 +165,16 @@ pub struct ExecuteDaoWithdrawal<'info> {
         mut,
         constraint = treasury_token_account.key() == treasury.token_account @ ParadoxError::InvalidVault,
     )]
-    pub treasury_token_account: Account<'info, TokenAccount>,
+    pub treasury_token_account: InterfaceAccount<'info, TokenAccount>,
     
-    /// CHECK: Must match pending_recipient
+    /// Recipient's token account - owner must match pending_recipient
     #[account(
         mut,
-        constraint = recipient_token_account.key() == treasury.pending_recipient @ ParadoxError::Unauthorized,
+        constraint = recipient_token_account.owner == treasury.pending_recipient @ ParadoxError::Unauthorized,
     )]
-    pub recipient_token_account: UncheckedAccount<'info>,
+    pub recipient_token_account: InterfaceAccount<'info, TokenAccount>,
     
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn execute_handler(ctx: Context<ExecuteDaoWithdrawal>) -> Result<()> {
@@ -172,28 +187,30 @@ pub fn execute_handler(ctx: Context<ExecuteDaoWithdrawal>) -> Result<()> {
     let amount = treasury.pending_amount;
     let recipient = treasury.pending_recipient;
     
-    // Transfer tokens
+    // Transfer tokens (uses transfer_checked for Token-2022 fee compliance)
     let mint_key = treasury.mint;
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         DAO_TREASURY_SEED,
         mint_key.as_ref(),
         &[treasury.bump],
     ];
     
-    transfer(
+    transfer_checked(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
-            Transfer {
+            TransferChecked {
                 from: ctx.accounts.treasury_token_account.to_account_info(),
                 to: ctx.accounts.recipient_token_account.to_account_info(),
                 authority: treasury.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
             },
             &[seeds],
         ),
         amount,
+        TOKEN_DECIMALS,
     )?;
     
-    // Update state
+    // Update state (checked arithmetic)
     treasury.spent_this_period = treasury.spent_this_period
         .checked_add(amount)
         .ok_or(ParadoxError::MathOverflow)?;
