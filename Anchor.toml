@@ -16,7 +16,7 @@ url = "https://api.apr.dev"
 
 [provider]
 cluster = "devnet"
-wallet = "../deployer_wallet.json"
+wallet = "../.keys/deploy_wallet.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"

@@ -2,7 +2,7 @@
 
 > SPL Token-2022 implementation with transfer fees, LP growth, and vesting mechanics.
 
-**Made by [LabsX402](https://x.com/LabsX402) for Solana**
+**Made by [Parad0x-Labs](https://x.com/Parad0x-Labs) for Solana**
 
 ---
 
@@ -36,10 +36,10 @@ A production-ready Token-2022 token with:
 
 ```bash
 # Install
-npm install @labsx402/token-2022-paradox
+npm install @Parad0x-Labs/token-2022-paradox
 
 # Or clone and build
-git clone https://github.com/LabsX402/token-2022-paradox
+git clone https://github.com/Parad0x-Labs/token-2022-paradox
 cd token-2022-paradox
 npm install
 anchor build
@@ -50,7 +50,7 @@ anchor build
 ### 1. Create Token
 
 ```typescript
-import { createParadoxToken } from '@labsx402/token-2022-paradox';
+import { createParadoxToken } from '@Parad0x-Labs/token-2022-paradox';
 
 const token = await createParadoxToken({
   name: 'My Token',
@@ -67,7 +67,7 @@ console.log('Token Mint:', token.mint.toBase58());
 ### 2. Initialize LP Growth
 
 ```typescript
-import { initLpGrowth } from '@labsx402/token-2022-paradox';
+import { initLpGrowth } from '@Parad0x-Labs/token-2022-paradox';
 
 await initLpGrowth({
   mint: token.mint,
@@ -80,7 +80,7 @@ await initLpGrowth({
 ### 3. Setup Vesting
 
 ```typescript
-import { initDevVesting } from '@labsx402/token-2022-paradox';
+import { initDevVesting } from '@Parad0x-Labs/token-2022-paradox';
 
 await initDevVesting({
   mint: token.mint,
@@ -172,17 +172,17 @@ token-2022-paradox/
 
 **Attribution Required:**
 ```
-Made by LabsX402 for Solana
-https://x.com/LabsX402
+Made by Parad0x-Labs for Solana
+https://x.com/Parad0x-Labs
 ```
 
 ## Links
 
-- Twitter: [@LabsX402](https://x.com/LabsX402)
-- Main Project: [PHANTOM PARADOX](https://labsx402.github.io/test/)
-- Docs: [Token Specs](https://labsx402.github.io/test/docs/token.html)
+- Twitter: [@Parad0x-Labs](https://x.com/Parad0x-Labs)
+- Main Project: [PHANTOM PARADOX](https://Parad0x-Labs.github.io/test/)
+- Docs: [Token Specs](https://Parad0x-Labs.github.io/test/docs/token.html)
 
 ---
 
-*Made by [LabsX402](https://x.com/LabsX402) for Solana*
+*Made by [Parad0x-Labs](https://x.com/Parad0x-Labs) for Solana*
 
