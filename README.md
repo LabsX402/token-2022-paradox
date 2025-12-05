@@ -30,7 +30,7 @@ A production-ready Token-2022 token with:
 - ✅ **LP Growth Manager** (fees auto-grow liquidity)
 - ✅ **Dev Vesting Vault** (cliff + linear unlock)
 - ✅ **DAO Treasury** (governance-controlled)
-- ✅ **Armageddon Mode** (emergency LP protection)
+- ✅ **Armageddon Mode** ([docs](./ARMAGEDDON.md)) - emergency LP protection
 
 ## Quick Start
 
